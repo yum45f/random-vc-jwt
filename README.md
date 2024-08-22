@@ -15,6 +15,10 @@ Output:
  - `tmp/vc-jwts.txt`: line separated VC-JWTs
  - `tmp/jwk/*.json`: JWKs of issuer's genereated keys
 
+Supported DSAs:
+- NIST P-256 (`p256`)
+- EdDSA Curve25519 (`ed25519`)
+
 ### Example
 ```bash
 go run main.go --alg p256 10 http://example.com/issuer http://example.com/subject
