@@ -4,9 +4,11 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -26,11 +28,11 @@ type VerifiableCredential struct {
 	CredentialSubject CredentialSubject `json:"credentialSubject"`
 }
 
-func generateRandomCredential(issuer string, holder string) (*VerifiableCredential, error) {
+func generateRandomCredential(issuer string, holder string) (*VerifiableCredential, string, error) {
 	randb := make([]byte, 32)
 	_, err := rand.Read(randb)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	encoded := base64.StdEncoding.EncodeToString(randb)
@@ -43,7 +45,7 @@ func generateRandomCredential(issuer string, holder string) (*VerifiableCredenti
 			ID:     holder,
 			Random: encoded,
 		},
-	}, nil
+	}, encoded, nil
 }
 
 type KeyAlg int
@@ -54,8 +56,9 @@ const (
 )
 
 func main() {
+	algstr := flag.String("alg", "ed25519", "Algorithm")
 	flag.Parse()
-	nStr := flag.Arg(1)
+	nStr := flag.Arg(0)
 	if nStr == "" {
 		panic("Please provide the number of key pairs to generate")
 	}
@@ -64,18 +67,18 @@ func main() {
 		panic("Please provide a valid number")
 	}
 
-	issuer := flag.Arg(2)
+	issuer := flag.Arg(1)
 	if issuer == "" {
 		panic("Please provide the issuer URI")
 	}
 
-	subject := flag.Arg(3)
+	subject := flag.Arg(2)
 	if subject == "" {
 		panic("Please provide the subject URI")
 	}
 
-	algstr := flag.String("alg", "EdDSA", "Algorithm")
-	alg := Ed25519
+	log.Println("Algorithm:", *algstr)
+	var alg KeyAlg
 	switch *algstr {
 	case "ed25519":
 		alg = Ed25519
@@ -108,15 +111,16 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	digest := sha256.Sum256(append([]byte(jwk.X), []byte(jwk.Y)...))
+	digestb := sha256.Sum256(append([]byte(jwk.X), []byte(jwk.Y)...))
+	digest := hex.EncodeToString(digestb[:])
 	err = os.WriteFile(fmt.Sprintf("tmp/jwk/%s.json", digest), jwkBytes, 0644)
 	if err != nil {
 		panic(err)
 	}
 
-	jwts := []string{}
+	jwts := map[string]string{}
 	for i := 0; i < n; i++ {
-		vc, err := generateRandomCredential(issuer, subject)
+		vc, random, err := generateRandomCredential(issuer, subject)
 		if err != nil {
 			panic(err)
 		}
@@ -141,23 +145,25 @@ func main() {
 		// sign
 		sig, err := kp.Sign([]byte(strings.Join([]string{header, payload}, ".")))
 		jwt := fmt.Sprintf("%s.%s.%s", header, payload, base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(sig))
-		jwts = append(jwts, jwt)
+		jwts[random] = jwt
 		if err != nil {
 			panic(err)
 		}
 	}
 
 	// generate n random verifiable credential
-	f, err := os.Create("tmp/vc-jwts.txt")
+	f, err := os.Create("tmp/vc-jwts.json")
+	if err != nil {
+		panic(err)
+	}
+	defer f.Close()
+
+	enc := json.NewEncoder(f)
+	enc.SetIndent("", "  ")
+	err = enc.Encode(jwts)
 	if err != nil {
 		panic(err)
 	}
 
-	for _, jwt := range jwts {
-		_, err := f.WriteString(jwt + "\n")
-		if err != nil {
-			panic(err)
-		}
-	}
-	defer f.Close()
+	log.Println("Generated", n, "VC-JWTs, signed with", digest)
 }

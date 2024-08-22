@@ -14,3 +14,8 @@ go run main.go <number of VCs> <issuer URI> <subject URI> --alg <dsa alg.>
 Output:
  - `tmp/vc-jwts.txt`: line separated VC-JWTs
  - `tmp/jwk/*.json`: JWKs of issuer's genereated keys
+
+### Example
+```bash
+go run main.go --alg p256 10 http://example.com/issuer http://example.com/subject
+```
