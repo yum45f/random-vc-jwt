@@ -1,29 +1,18 @@
 package main
 
 import (
-	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
-	"github.com/golang-jwt/jwt/v5"
+	"github.com/yum45f/random-vc-jwt/keypair"
 )
-
-type Ed25519KeyPair struct {
-	PublicKey  *ed25519.PublicKey
-	PrivateKey *ed25519.PrivateKey
-}
-
-type JsonWebKey struct {
-	Kid string `json:"kid"`
-	Kty string `json:"kty"`
-	Alg string `json:"alg"`
-	Crv string `json:"crv"`
-	X   string `json:"x"`
-}
 
 type CredentialSubject struct {
 	ID     string `json:"id"`
@@ -35,18 +24,6 @@ type VerifiableCredential struct {
 	Type              []string          `json:"type"`
 	Issuer            string            `json:"issuer"`
 	CredentialSubject CredentialSubject `json:"credentialSubject"`
-}
-
-func generateEd25519KeyPair() (*Ed25519KeyPair, error) {
-	pub, priv, err := ed25519.GenerateKey(nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return &Ed25519KeyPair{
-		PublicKey:  &pub,
-		PrivateKey: &priv,
-	}, nil
 }
 
 func generateRandomCredential(issuer string, holder string) (*VerifiableCredential, error) {
@@ -69,8 +46,16 @@ func generateRandomCredential(issuer string, holder string) (*VerifiableCredenti
 	}, nil
 }
 
+type KeyAlg int
+
+const (
+	P256 KeyAlg = iota
+	Ed25519
+)
+
 func main() {
-	nStr := os.Args[1]
+	flag.Parse()
+	nStr := flag.Arg(1)
 	if nStr == "" {
 		panic("Please provide the number of key pairs to generate")
 	}
@@ -79,20 +64,34 @@ func main() {
 		panic("Please provide a valid number")
 	}
 
-	issuer := os.Args[2]
+	issuer := flag.Arg(2)
 	if issuer == "" {
-		panic("Please provide the issuer")
+		panic("Please provide the issuer URI")
 	}
 
-	holder := os.Args[3]
-	if holder == "" {
-		panic("Please provide the holder")
+	subject := flag.Arg(3)
+	if subject == "" {
+		panic("Please provide the subject URI")
+	}
+
+	algstr := flag.String("alg", "EdDSA", "Algorithm")
+	alg := Ed25519
+	switch *algstr {
+	case "ed25519":
+		alg = Ed25519
+	case "p256":
+		alg = P256
+	default:
+		panic("Invalid algorithm")
 	}
 
 	// generate key pair
-	kp, err := generateEd25519KeyPair()
-	if err != nil {
-		panic(err)
+	var kp keypair.KeyPair
+	switch alg {
+	case P256:
+		kp = keypair.NewECP256KeyPairFactory().New()
+	case Ed25519:
+		kp = keypair.NewEd25519KeyPairFactory().New()
 	}
 
 	// check if jwk directory exists
@@ -104,56 +103,61 @@ func main() {
 	}
 
 	// save jwk to file
-	jwk := JsonWebKey{
-		Kid: "did:web:localhost%3A8081#key-0",
-		Kty: "OKP",
-		Alg: "EdDSA",
-		Crv: "Ed25519",
-		X:   base64.URLEncoding.EncodeToString(*kp.PublicKey),
-	}
+	jwk := kp.ToJWK()
 	jwkBytes, err := json.Marshal(jwk)
 	if err != nil {
 		panic(err)
 	}
-	err = os.WriteFile(fmt.Sprintf("tmp/jwk/%s.json", jwk.Kid), jwkBytes, 0644)
+	digest := sha256.Sum256(append([]byte(jwk.X), []byte(jwk.Y)...))
+	err = os.WriteFile(fmt.Sprintf("tmp/jwk/%s.json", digest), jwkBytes, 0644)
 	if err != nil {
 		panic(err)
+	}
+
+	jwts := []string{}
+	for i := 0; i < n; i++ {
+		vc, err := generateRandomCredential(issuer, subject)
+		if err != nil {
+			panic(err)
+		}
+
+		vcb, err := json.Marshal(vc)
+		if err != nil {
+			panic(err)
+		}
+
+		headerb, err := json.Marshal(map[string]interface{}{
+			"alg": jwk.Alg,
+			"kty": jwk.Kty,
+			"crv": jwk.Crv,
+		})
+		if err != nil {
+			panic(err)
+		}
+
+		header := base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(headerb)
+		payload := base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(vcb)
+
+		// sign
+		sig, err := kp.Sign([]byte(strings.Join([]string{header, payload}, ".")))
+		jwt := fmt.Sprintf("%s.%s.%s", header, payload, base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(sig))
+		jwts = append(jwts, jwt)
+		if err != nil {
+			panic(err)
+		}
 	}
 
 	// generate n random verifiable credential
-	f, err := os.Create("tmp/jwt.txt")
+	f, err := os.Create("tmp/vc-jwts.txt")
 	if err != nil {
 		panic(err)
 	}
-	defer f.Close()
-	for i := 0; i < n; i++ {
-		vc, err := generateRandomCredential(issuer, holder)
-		if err != nil {
-			panic(err)
-		}
 
-		// vc to map
-		vcMap := map[string]interface{}{}
-		vcBytes, err := json.Marshal(vc)
-		if err != nil {
-			panic(err)
-		}
-		err = json.Unmarshal(vcBytes, &vcMap)
-		if err != nil {
-			panic(err)
-		}
-
-		jwt := jwt.NewWithClaims(jwt.SigningMethodEdDSA, jwt.MapClaims(vcMap))
-		jwt.Header["kid"] = jwk.Kid
-
-		tokenString, err := jwt.SignedString(*kp.PrivateKey)
-		if err != nil {
-			panic(err)
-		}
-
-		_, err = f.WriteString(tokenString + "\n")
+	for _, jwt := range jwts {
+		_, err := f.WriteString(jwt + "\n")
 		if err != nil {
 			panic(err)
 		}
 	}
+	defer f.Close()
 }

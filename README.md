@@ -8,9 +8,9 @@ Reference version: [08 March 2024](https://www.w3.org/TR/2024/WD-vc-jose-cose-20
 
 ## Usage
 ```bash
-go run main.go <number of VCs> <issuer did> <subject did>
+go run main.go <number of VCs> <issuer URI> <subject URI> --alg <dsa alg.>
 ```
 
 Output:
- - `tmp/jwt.txt`: line separated VC-JWTs
+ - `tmp/vc-jwts.txt`: line separated VC-JWTs
  - `tmp/jwk/*.json`: JWKs of issuer's genereated keys

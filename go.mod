@@ -1,5 +1,3 @@
-module github.com/Credo-Project/random-vc-generator
+module github.com/yum45f/random-vc-jwt
 
 go 1.22.1
-
-require github.com/golang-jwt/jwt/v5 v5.2.1
