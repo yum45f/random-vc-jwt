@@ -139,12 +139,12 @@ func main() {
 			panic(err)
 		}
 
-		header := base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(headerb)
-		payload := base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(vcb)
+		header := base64.URLEncoding.EncodeToString(headerb)
+		payload := base64.URLEncoding.EncodeToString(vcb)
 
 		// sign
 		sig, err := kp.Sign([]byte(strings.Join([]string{header, payload}, ".")))
-		jwt := fmt.Sprintf("%s.%s.%s", header, payload, base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(sig))
+		jwt := fmt.Sprintf("%s.%s.%s", header, payload, base64.URLEncoding.EncodeToString(sig))
 		jwts[random] = jwt
 		if err != nil {
 			panic(err)
